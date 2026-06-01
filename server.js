@@ -1,86 +1,164 @@
 const express = require('express');
-const fs      = require('fs');
-const path    = require('path');
+const https = require('https');
+const app = express();
 
-const app  = express();
-const PORT = 3000;
-const DATA_FILE = path.join(__dirname, 'readings.json');
-const MAX_READINGS = 200;
+const PORT = process.env.PORT || 3000;
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, 'public')));
+// O ID EXATO da sua máquina no Dweet.io
+const DWEET_DEVICE = 'ESP32-GPRS-COLETA-7734';
 
-// ── Carrega leituras salvas (sobrevive a reinicialização do servidor) ──────────
-let readings = [];
-if (fs.existsSync(DATA_FILE)) {
-  try { readings = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); } catch (_) { readings = []; }
+// Variável que guarda a última leitura na memória do servidor
+let ultimaLeitura = null;
+let ultimoTimestamp = '';
+
+// =====================================================================
+// 1. MOTOR DE BUSCA (POLLING NO DWEET.IO)
+// =====================================================================
+function buscarNoDweet() {
+    https.get(`https://dweet.io/get/latest/dweet/for/${DWEET_DEVICE}`, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+            try {
+                const json = JSON.parse(data);
+                if (json.this === 'succeeded' && json.with && json.with.length > 0) {
+                    const dweet = json.with[0];
+                    
+                    // Se o horário do pacote for novo, atualiza o sistema!
+                    if (dweet.created !== ultimoTimestamp) {
+                        ultimoTimestamp = dweet.created;
+                        ultimaLeitura = dweet.content;
+                        
+                        // Formata a data para o horário do Brasil
+                        const dataLocal = new Date(dweet.created).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+                        ultimaLeitura.data_formatada = dataLocal;
+                        
+                        console.log(`[${dataLocal}] 📥 Novo dado da máquina recebido via Dweet!`);
+                    }
+                }
+            } catch (e) {
+                console.error('Erro ao interpretar pacote do Dweet:', e.message);
+            }
+        });
+    }).on('error', (e) => {
+        console.error('Erro de conexão com a nuvem Dweet:', e.message);
+    });
 }
 
-function saveReadings() {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(readings.slice(-MAX_READINGS)));
-}
+// Inicia a busca imediatamente e depois repete a cada 10 segundos
+buscarNoDweet();
+setInterval(buscarNoDweet, 10000);
 
-// ── Endpoint principal: recebe dados do ESP32 via GET ou POST ─────────────────
-// Exemplo GET:  /data?temp=25.3&umid=60&baro=1013&alt=500&volt=220&p1=10.5&p2=10.3&motor=75&lat=-23.5&lon=-46.6&sinal=18&chip=1&coletando=1
-// Exemplo POST: mesmos campos no body JSON ou form-urlencoded
-function handleData(req, res) {
-  const p = { ...req.query, ...req.body };
+// =====================================================================
+// 2. DASHBOARD WEB (A TELA QUE VOCÊ VÊ NO CELULAR/PC)
+// =====================================================================
+app.get('/', (req, res) => {
+    // Se a máquina ainda não mandou nada, mostra tela de espera
+    if (!ultimaLeitura) {
+        return res.send(`
+            <div style="font-family: Arial, sans-serif; text-align: center; margin-top: 100px;">
+                <h1>📡 Conectando com a Máquina...</h1>
+                <p>O servidor está escutando o Dweet.io.</p>
+                <p style="color: gray;">Aguardando o próximo envio do GPRS...</p>
+                <script>setTimeout(() => location.reload(), 5000);</script>
+            </div>
+        `);
+    }
 
-  const reading = {
-    timestamp:  new Date().toISOString(),
-    temp:       parseFloat(p.temp   ?? p.temp_amb  ?? 0),
-    umid:       parseFloat(p.umid   ?? 0),
-    baro:       parseFloat(p.baro   ?? 0),
-    alt:        parseFloat(p.alt    ?? p.altim     ?? 0),
-    volt:       parseFloat(p.volt   ?? p.tensao    ?? 0),
-    p1:         parseFloat(p.p1     ?? p.pressao1  ?? 0),
-    p2:         parseFloat(p.p2     ?? p.pressao2  ?? 0),
-    motor:      parseFloat(p.motor  ?? 0),
-    lat:        parseFloat(p.lat    ?? 0),
-    lon:        parseFloat(p.lon    ?? 0),
-    sinal:      parseInt  (p.sinal  ?? p.gsm_sinal ?? 0),
-    chip:       parseInt  (p.chip   ?? p.gsm_chip  ?? 0),
-    coletando:  parseInt  (p.coletando ?? 0),
-    ip:         req.ip,
-  };
+    // Se tem dados, desenha o painel!
+    const html = `
+    <!DOCTYPE html>
+    <html lang="pt-BR">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Dashboard GPRS</title>
+        <meta http-equiv="refresh" content="10">
+        <style>
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; margin: 0; padding: 20px; }
+            .container { max-width: 900px; margin: auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+            h1 { text-align: center; color: #2c3e50; margin-bottom: 5px; }
+            .status { text-align: center; font-size: 14px; color: #7f8c8d; margin-bottom: 30px; }
+            .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 15px; }
+            .card { background: #ecf0f1; padding: 15px; border-radius: 8px; text-align: center; border-left: 5px solid #3498db; }
+            .card h3 { margin: 0 0 10px 0; font-size: 13px; color: #34495e; text-transform: uppercase; }
+            .card p { margin: 0; font-size: 24px; font-weight: bold; color: #2980b9; }
+            
+            .coletando { border-left-color: #27ae60; background: #e8f8f5; }
+            .parado { border-left-color: #e74c3c; background: #fdedec; }
+            .sinal-bom { border-left-color: #8e44ad; background: #f4ecf7; }
+            
+            .map-btn { display: block; max-width: 300px; margin: 30px auto 10px auto; padding: 12px; background: #2c3e50; color: white; text-align: center; text-decoration: none; border-radius: 5px; font-weight: bold; }
+            .map-btn:hover { background: #1a252f; }
+            .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #aaa; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>📊 Painel de Monitoramento</h1>
+            <div class="status">Última atualização: <b>${ultimaLeitura.data_formatada}</b></div>
+            
+            <div class="grid">
+                <div class="card ${ultimaLeitura.coletando == 1 ? 'coletando' : 'parado'}">
+                    <h3>Status Coleta</h3>
+                    <p>${ultimaLeitura.coletando == 1 ? 'ATIVA' : 'PARADA'}</p>
+                </div>
+                <div class="card sinal-bom">
+                    <h3>Sinal GSM</h3>
+                    <p>${ultimaLeitura.sinal}/31</p>
+                </div>
+                <div class="card">
+                    <h3>Tensão</h3>
+                    <p>${ultimaLeitura.volt} V</p>
+                </div>
+                <div class="card">
+                    <h3>Motor PWM</h3>
+                    <p>${ultimaLeitura.motor} %</p>
+                </div>
+                <div class="card">
+                    <h3>Temperatura</h3>
+                    <p>${ultimaLeitura.temp} °C</p>
+                </div>
+                <div class="card">
+                    <h3>Umidade</h3>
+                    <p>${ultimaLeitura.umid} %</p>
+                </div>
+                <div class="card">
+                    <h3>Barômetro</h3>
+                    <p>${ultimaLeitura.baro} hPa</p>
+                </div>
+                <div class="card">
+                    <h3>Altitude</h3>
+                    <p>${ultimaLeitura.alt} m</p>
+                </div>
+                <div class="card">
+                    <h3>Pressão 1</h3>
+                    <p>${ultimaLeitura.p1} kPa</p>
+                </div>
+                <div class="card">
+                    <h3>Pressão 2</h3>
+                    <p>${ultimaLeitura.p2} kPa</p>
+                </div>
+            </div>
 
-  readings.push(reading);
-  if (readings.length > MAX_READINGS) readings.shift();
-  saveReadings();
+            <a class="map-btn" href="https://maps.google.com/?q=%.6f,%.6f${ultimaLeitura.lat},${ultimaLeitura.lon}" target="_blank">
+                📍 Abrir no Google Maps
+            </a>
 
-  const ts = new Date(reading.timestamp).toLocaleString('pt-BR');
-  console.log(`[${ts}] Novo dado — Temp:${reading.temp}°C  Volt:${reading.volt}V  Sinal:${reading.sinal}/31  IP:${reading.ip}`);
+            <div class="footer">
+                Operando via Render.com (ID: srv-d8erk899rddc73clbdug) + Dweet Relay
+            </div>
+        </div>
+    </body>
+    </html>
+    `;
 
-  res.json({ ok: true, total: readings.length });
-}
-
-app.get ('/data', handleData);
-app.post('/data', handleData);
-
-// ── API de leitura para o dashboard ──────────────────────────────────────────
-app.get('/api/readings', (_req, res) => {
-  res.json(readings);
+    res.send(html);
 });
 
-app.get('/api/latest', (_req, res) => {
-  if (readings.length === 0) return res.json(null);
-  res.json(readings[readings.length - 1]);
-});
-
-app.get('/api/clear', (_req, res) => {
-  readings = [];
-  saveReadings();
-  res.json({ ok: true });
-});
-
-// ── Inicia servidor ──────────────────────────────────────────────────────────
-app.listen(PORT, '0.0.0.0', () => {
-  const ifaces = require('os').networkInterfaces();
-  const ips = Object.values(ifaces).flat().filter(i => i.family === 'IPv4' && !i.internal).map(i => i.address);
-  console.log(`\n=== GPRS Dashboard ===`);
-  console.log(`  Local:  http://localhost:${PORT}`);
-  ips.forEach(ip => console.log(`  Rede:   http://${ip}:${PORT}`));
-  console.log(`\n  Endpoint ESP32: http://<seu-ip>:${PORT}/data?temp=25&umid=60&...`);
-  console.log('');
+// =====================================================================
+// INICIA O SERVIDOR
+// =====================================================================
+app.listen(PORT, () => {
+    console.log(`🚀 Servidor rodando na porta ${PORT}. Escutando Dweet.io...`);
 });
