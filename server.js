@@ -10,13 +10,13 @@ let ultimaLeitura = null;
 let ultimoTimestamp = '';
 
 // =====================================================================
-// 1. MOTOR DE BUSCA MODERNO (FETCH API) COM O NOVO DWEET.CC
+// 1. MOTOR DE BUSCA MODERNO (DWEET.IO VIA HTTP - PORTA 80)
 // =====================================================================
 async function buscarNoDweet() {
     try {
-        console.log('Buscando dados na nuvem (Dweet.cc)...');
-        // Usando o servidor novo (dweet.cc)
-        const resposta = await fetch(`https://dweet.cc/get/latest/dweet/for/${DWEET_DEVICE}`);
+        console.log('Buscando dados na nuvem (Dweet.io HTTP)...');
+        // Atenção aqui: usando http:// (Porta 80) para não dar erro de SSL!
+        const resposta = await fetch(`http://dweet.io/get/latest/dweet/for/${DWEET_DEVICE}`);
         
         if (!resposta.ok) {
             throw new Error(`Servidor Dweet falhou: ${resposta.status}`);
@@ -27,7 +27,6 @@ async function buscarNoDweet() {
         if (json.this === 'succeeded' && json.with && json.with.length > 0) {
             const dweet = json.with[0];
             
-            // Se for uma leitura nova, atualiza o Dashboard!
             if (dweet.created !== ultimoTimestamp) {
                 ultimoTimestamp = dweet.created;
                 ultimaLeitura = dweet.content;
@@ -43,7 +42,6 @@ async function buscarNoDweet() {
     }
 }
 
-// Busca imediatamente ao ligar e depois a cada 10 segundos
 buscarNoDweet();
 setInterval(buscarNoDweet, 10000);
 
@@ -55,7 +53,7 @@ app.get('/', (req, res) => {
         return res.send(`
             <div style="font-family: Arial, sans-serif; text-align: center; margin-top: 100px;">
                 <h1>📡 Conectando com a Máquina...</h1>
-                <p>O servidor está escutando o novo Dweet.cc.</p>
+                <p>O servidor está escutando o Dweet.io na Porta 80.</p>
                 <p style="color: gray;">Aguardando o próximo envio do GPRS...</p>
                 <script>setTimeout(() => location.reload(), 5000);</script>
             </div>
@@ -137,12 +135,12 @@ app.get('/', (req, res) => {
                 </div>
             </div>
 
-            <a class="map-btn" href="http://googleusercontent.com/maps.google.com/7{ultimaLeitura.lat},${ultimaLeitura.lon}" target="_blank">
+            <a class="map-btn" href="http://googleusercontent.com/maps.google.com/7${ultimaLeitura.lat},${ultimaLeitura.lon}" target="_blank">
                 📍 Abrir no Google Maps
             </a>
 
             <div class="footer">
-                Operando via Render.com + Dweet.cc Relay
+                Operando via Render.com + Dweet.io HTTP Relay
             </div>
         </div>
     </body>
@@ -156,5 +154,5 @@ app.get('/', (req, res) => {
 // INICIA O SERVIDOR
 // =====================================================================
 app.listen(PORT, () => {
-    console.log(`🚀 Servidor ONLINE na porta ${PORT}. Escutando Dweet.cc...`);
+    console.log(`🚀 Servidor ONLINE na porta ${PORT}. Escutando Dweet.io via HTTP...`);
 });
