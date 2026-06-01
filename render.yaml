@@ -1,0 +1,9 @@
+﻿services:
+  - type: web
+    name: gprs-dashboard
+    runtime: python
+    buildCommand: echo ok
+    startCommand: python server.py
+    envVars:
+      - key: PORT
+        value: 10000

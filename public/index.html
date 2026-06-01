@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GPRS Dashboard — ESP32</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:       #0f1117;
+    --surface:  #1a1d27;
+    --border:   #2a2d3a;
+    --text:     #e4e6f0;
+    --muted:    #6b7280;
+    --green:    #22c55e;
+    --blue:     #3b82f6;
+    --orange:   #f59e0b;
+    --red:      #ef4444;
+    --purple:   #a855f7;
+    --cyan:     #06b6d4;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 24px; background: var(--surface); border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: .5px; }
+  header h1 span { color: var(--blue); }
+  .status-pill {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 12px; border-radius: 999px;
+    font-size: .78rem; font-weight: 500;
+    background: var(--border);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.live { background: var(--green); animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  main { max-width: 1200px; margin: 0 auto; padding: 20px 16px; }
+
+  /* ── Barra de estado GPRS ─────────────────────────────── */
+  #gprs-bar {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 18px; margin-bottom: 20px; font-size: .85rem;
+  }
+  #gprs-bar .item { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 80px; }
+  #gprs-bar .item label { color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .5px; }
+  #gprs-bar .item strong { font-size: 1rem; }
+  #gprs-bar .sep { width: 1px; height: 36px; background: var(--border); }
+  .badge { padding: 2px 10px; border-radius: 999px; font-size: .75rem; font-weight: 600; }
+  .badge.ok     { background: #16532730; color: var(--green); border: 1px solid #22c55e50; }
+  .badge.warn   { background: #78350f30; color: var(--orange); border: 1px solid #f59e0b50; }
+  .badge.err    { background: #7f1d1d30; color: var(--red); border: 1px solid #ef444450; }
+  .badge.off    { background: var(--border); color: var(--muted); }
+
+  /* ── Grade de cards ─────────────────────────────────── */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; position: relative; overflow: hidden;
+  }
+  .card::before { content:''; position:absolute; top:0; left:0; right:0; height:3px; }
+  .card.temp::before   { background: var(--orange); }
+  .card.umid::before   { background: var(--blue); }
+  .card.baro::before   { background: var(--purple); }
+  .card.alt::before    { background: var(--cyan); }
+  .card.volt::before   { background: var(--green); }
+  .card.p1::before     { background: #ec4899; }
+  .card.p2::before     { background: #f97316; }
+  .card.motor::before  { background: var(--red); }
+  .card-label { font-size: .68rem; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin-bottom: 8px; }
+  .card-value { font-size: 1.9rem; font-weight: 700; line-height: 1; }
+  .card-unit  { font-size: .75rem; color: var(--muted); margin-top: 4px; }
+
+  /* ── Barras de sinal ─────────────────────────────────── */
+  .signal-bars { display: flex; align-items: flex-end; gap: 2px; height: 20px; }
+  .signal-bars span {
+    width: 5px; border-radius: 2px; background: var(--border);
+    transition: background .3s;
+  }
+  .signal-bars span.active { background: var(--green); }
+
+  /* ── GPS ─────────────────────────────────────────────── */
+  #gps-row {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 18px; margin-bottom: 20px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+  }
+  #gps-row .coord { font-size: 1.1rem; font-weight: 600; }
+  #gps-row .coord span { color: var(--muted); font-size: .75rem; font-weight: 400; margin-right: 4px; }
+  #gps-link { margin-left: auto; }
+  #gps-link a {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 14px; border-radius: 8px; background: #1d4ed820; border: 1px solid #3b82f650;
+    color: var(--blue); font-size: .82rem; text-decoration: none; transition: background .2s;
+  }
+  #gps-link a:hover { background: #1d4ed840; }
+
+  /* ── Gráficos ─────────────────────────────────────────── */
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  @media (max-width: 700px) { .charts { grid-template-columns: 1fr; } }
+  .chart-box {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px;
+  }
+  .chart-box h3 { font-size: .8rem; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 12px; }
+
+  /* ── Tabela de histórico ─────────────────────────────── */
+  .table-wrap {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 20px;
+  }
+  .table-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 18px; border-bottom: 1px solid var(--border);
+  }
+  .table-header h3 { font-size: .85rem; font-weight: 600; }
+  .btn-clear {
+    padding: 4px 12px; border-radius: 6px; background: #7f1d1d20; border: 1px solid #ef444430;
+    color: var(--red); font-size: .75rem; cursor: pointer; transition: background .2s;
+  }
+  .btn-clear:hover { background: #7f1d1d40; }
+  table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+  thead th { padding: 8px 12px; text-align: left; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  tbody tr { border-bottom: 1px solid var(--border); transition: background .15s; }
+  tbody tr:hover { background: #ffffff08; }
+  tbody td { padding: 7px 12px; white-space: nowrap; }
+  tbody tr:last-child { border-bottom: none; }
+  .no-data { text-align: center; color: var(--muted); padding: 40px; font-size: .9rem; }
+
+  footer { text-align: center; color: var(--muted); font-size: .72rem; padding: 16px; }
+  .last-update { color: var(--muted); font-size: .75rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>GPRS <span>Dashboard</span> — ESP32</h1>
+  <div style="display:flex;align-items:center;gap:12px">
+    <span class="last-update" id="last-ts">Sem dados</span>
+    <div class="status-pill">
+      <div class="dot" id="live-dot"></div>
+      <span id="live-label">Aguardando</span>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <!-- Barra GPRS -->
+  <div id="gprs-bar">
+    <div class="item">
+      <label>Coleta</label>
+      <strong id="b-coletando"><span class="badge off">—</span></strong>
+    </div>
+    <div class="sep"></div>
+    <div class="item">
+      <label>GPRS</label>
+      <strong id="b-gprs"><span class="badge off">—</span></strong>
+    </div>
+    <div class="sep"></div>
+    <div class="item" style="align-items:flex-start;min-width:100px">
+      <label>Sinal GSM</label>
+      <div class="signal-bars" id="signal-bars">
+        <span style="height:25%"></span>
+        <span style="height:40%"></span>
+        <span style="height:55%"></span>
+        <span style="height:75%"></span>
+        <span style="height:100%"></span>
+      </div>
+    </div>
+    <div class="sep"></div>
+    <div class="item">
+      <label>CSQ</label>
+      <strong id="b-csq">—</strong>
+    </div>
+    <div class="sep"></div>
+    <div class="item">
+      <label>Leituras</label>
+      <strong id="b-total">0</strong>
+    </div>
+    <div class="sep"></div>
+    <div class="item">
+      <label>IP do dispositivo</label>
+      <strong id="b-ip" style="font-size:.85rem">—</strong>
+    </div>
+  </div>
+
+  <!-- Cards de sensores -->
+  <div class="cards">
+    <div class="card temp">
+      <div class="card-label">Temperatura</div>
+      <div class="card-value" id="v-temp">—</div>
+      <div class="card-unit">°C</div>
+    </div>
+    <div class="card umid">
+      <div class="card-label">Umidade</div>
+      <div class="card-value" id="v-umid">—</div>
+      <div class="card-unit">%</div>
+    </div>
+    <div class="card baro">
+      <div class="card-label">Barométrica</div>
+      <div class="card-value" id="v-baro">—</div>
+      <div class="card-unit">hPa</div>
+    </div>
+    <div class="card alt">
+      <div class="card-label">Altitude</div>
+      <div class="card-value" id="v-alt">—</div>
+      <div class="card-unit">m</div>
+    </div>
+    <div class="card volt">
+      <div class="card-label">Tensão</div>
+      <div class="card-value" id="v-volt">—</div>
+      <div class="card-unit">V</div>
+    </div>
+    <div class="card p1">
+      <div class="card-label">Pressão 1</div>
+      <div class="card-value" id="v-p1">—</div>
+      <div class="card-unit">kPa</div>
+    </div>
+    <div class="card p2">
+      <div class="card-label">Pressão 2</div>
+      <div class="card-value" id="v-p2">—</div>
+      <div class="card-unit">kPa</div>
+    </div>
+    <div class="card motor">
+      <div class="card-label">Motor</div>
+      <div class="card-value" id="v-motor">—</div>
+      <div class="card-unit">%</div>
+    </div>
+  </div>
+
+  <!-- GPS -->
+  <div id="gps-row">
+    <div>
+      <div style="color:var(--muted);font-size:.7rem;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Localização GPS</div>
+      <div style="display:flex;gap:24px;flex-wrap:wrap">
+        <div class="coord"><span>LAT</span><span id="v-lat">—</span></div>
+        <div class="coord"><span>LON</span><span id="v-lon">—</span></div>
+      </div>
+    </div>
+    <div id="gps-link">
+      <a id="maps-link" href="#" target="_blank">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+        Ver no Maps
+      </a>
+    </div>
+  </div>
+
+  <!-- Gráficos -->
+  <div class="charts">
+    <div class="chart-box">
+      <h3>Temperatura &amp; Umidade</h3>
+      <canvas id="chart-tu" height="180"></canvas>
+    </div>
+    <div class="chart-box">
+      <h3>Tensão (V)</h3>
+      <canvas id="chart-volt" height="180"></canvas>
+    </div>
+    <div class="chart-box">
+      <h3>Pressão 1 &amp; 2 (kPa)</h3>
+      <canvas id="chart-press" height="180"></canvas>
+    </div>
+    <div class="chart-box">
+      <h3>Motor (%)</h3>
+      <canvas id="chart-motor" height="180"></canvas>
+    </div>
+  </div>
+
+  <!-- Tabela histórico -->
+  <div class="table-wrap">
+    <div class="table-header">
+      <h3>Histórico de Leituras</h3>
+      <button class="btn-clear" onclick="clearData()">Limpar dados</button>
+    </div>
+    <div style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Data/Hora</th>
+            <th>Temp (°C)</th>
+            <th>Umid (%)</th>
+            <th>Baro (hPa)</th>
+            <th>Alt (m)</th>
+            <th>Tensão (V)</th>
+            <th>P1 (kPa)</th>
+            <th>P2 (kPa)</th>
+            <th>Motor (%)</th>
+            <th>Lat</th>
+            <th>Lon</th>
+            <th>Sinal</th>
+          </tr>
+        </thead>
+        <tbody id="table-body">
+          <tr><td colspan="12" class="no-data">Nenhum dado recebido ainda.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Endpoint Info -->
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:20px">
+    <h3 style="font-size:.8rem;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:10px">Como configurar o ESP32 GPRS</h3>
+    <p style="font-size:.8rem;color:var(--muted);margin-bottom:8px">Envie um HTTP GET para o endpoint abaixo com os parâmetros dos sensores:</p>
+    <code id="endpoint-example" style="display:block;background:#0a0c13;padding:10px 12px;border-radius:6px;font-size:.75rem;color:#a5f3fc;word-break:break-all;border:1px solid var(--border)">
+      http://&lt;IP-DO-PC&gt;:3000/data?temp=25.3&amp;umid=60&amp;baro=1013&amp;alt=500&amp;volt=220&amp;p1=10.5&amp;p2=10.3&amp;motor=75&amp;lat=-23.55&amp;lon=-46.63&amp;sinal=18&amp;chip=1&amp;coletando=1
+    </code>
+    <p style="font-size:.75rem;color:var(--muted);margin-top:8px">Também aceita HTTP POST (JSON ou form-urlencoded) com os mesmos campos.</p>
+  </div>
+
+</main>
+
+<footer>GPRS Dashboard — atualiza a cada 5 segundos</footer>
+
+<script>
+const CHART_OPTS = (color) => ({
+  responsive: true,
+  animation: { duration: 300 },
+  plugins: { legend: { labels: { color: '#9ca3af', font: { size: 11 } } } },
+  scales: {
+    x: { ticks: { color: '#6b7280', font: { size: 10 }, maxTicksLimit: 8 }, grid: { color: '#1f2233' } },
+    y: { ticks: { color: '#6b7280', font: { size: 10 } }, grid: { color: '#1f2233' } }
+  }
+});
+
+function mkChart(id, labels, datasets) {
+  const ctx = document.getElementById(id).getContext('2d');
+  return new Chart(ctx, { type: 'line', data: { labels, datasets }, options: CHART_OPTS() });
+}
+
+const chartTU = mkChart('chart-tu', [], [
+  { label: 'Temp (°C)', data: [], borderColor: '#f59e0b', backgroundColor: '#f59e0b15', tension: .3, pointRadius: 2 },
+  { label: 'Umid (%)',  data: [], borderColor: '#3b82f6', backgroundColor: '#3b82f615', tension: .3, pointRadius: 2 }
+]);
+const chartVolt = mkChart('chart-volt', [], [
+  { label: 'Tensão (V)', data: [], borderColor: '#22c55e', backgroundColor: '#22c55e15', tension: .3, pointRadius: 2, fill: true }
+]);
+const chartPress = mkChart('chart-press', [], [
+  { label: 'P1 (kPa)', data: [], borderColor: '#ec4899', backgroundColor: '#ec489915', tension: .3, pointRadius: 2 },
+  { label: 'P2 (kPa)', data: [], borderColor: '#f97316', backgroundColor: '#f9731615', tension: .3, pointRadius: 2 }
+]);
+const chartMotor = mkChart('chart-motor', [], [
+  { label: 'Motor (%)', data: [], borderColor: '#ef4444', backgroundColor: '#ef444415', tension: .3, pointRadius: 2, fill: true }
+]);
+
+function fmt(n, d=1) { return isNaN(n) ? '—' : Number(n).toFixed(d); }
+
+function updateSignal(sinal) {
+  const bars = document.querySelectorAll('.signal-bars span');
+  let active = 0;
+  if (sinal > 0 && sinal < 99) {
+    if (sinal < 7) active = 1; else if (sinal < 13) active = 2;
+    else if (sinal < 19) active = 3; else if (sinal < 25) active = 4; else active = 5;
+  }
+  bars.forEach((b, i) => b.classList.toggle('active', i < active));
+}
+
+function badge(ok, okTxt, failTxt) {
+  return ok
+    ? `<span class="badge ok">${okTxt}</span>`
+    : `<span class="badge err">${failTxt}</span>`;
+}
+
+async function fetchData() {
+  try {
+    const res  = await fetch('/api/readings');
+    const data = await res.json();
+
+    if (!data.length) return;
+
+    const last = data[data.length - 1];
+    const dot  = document.getElementById('live-dot');
+    const lbl  = document.getElementById('live-label');
+    const secs = (Date.now() - new Date(last.timestamp)) / 1000;
+
+    if (secs < 30) { dot.className = 'dot live'; lbl.textContent = 'Ao vivo'; }
+    else           { dot.className = 'dot';       lbl.textContent = `${Math.round(secs)}s atrás`; }
+
+    document.getElementById('last-ts').textContent =
+      new Date(last.timestamp).toLocaleString('pt-BR');
+
+    // Cards
+    document.getElementById('v-temp').textContent  = fmt(last.temp);
+    document.getElementById('v-umid').textContent  = fmt(last.umid);
+    document.getElementById('v-baro').textContent  = fmt(last.baro, 1);
+    document.getElementById('v-alt').textContent   = fmt(last.alt, 0);
+    document.getElementById('v-volt').textContent  = fmt(last.volt, 1);
+    document.getElementById('v-p1').textContent    = fmt(last.p1, 2);
+    document.getElementById('v-p2').textContent    = fmt(last.p2, 2);
+    document.getElementById('v-motor').textContent = fmt(last.motor, 0);
+
+    // GPS
+    const lat = parseFloat(last.lat), lon = parseFloat(last.lon);
+    document.getElementById('v-lat').textContent = fmt(lat, 6);
+    document.getElementById('v-lon').textContent = fmt(lon, 6);
+    if (lat !== 0 || lon !== 0) {
+      document.getElementById('maps-link').href =
+        `https://www.google.com/maps?q=${lat},${lon}`;
+    }
+
+    // Status bar
+    document.getElementById('b-coletando').innerHTML = badge(last.coletando, 'Coletando', 'Parado');
+    document.getElementById('b-gprs').innerHTML      = badge(last.chip,      'Conectado', 'Offline');
+    document.getElementById('b-csq').textContent     = last.sinal > 0 && last.sinal < 99 ? `${last.sinal}/31` : '—';
+    document.getElementById('b-total').textContent   = data.length;
+    document.getElementById('b-ip').textContent      = last.ip || '—';
+    updateSignal(last.sinal);
+
+    // Gráficos (últimas 40 leituras)
+    const slice  = data.slice(-40);
+    const labels = slice.map(d => new Date(d.timestamp).toLocaleTimeString('pt-BR'));
+
+    function updChart(chart, lbs, ...series) {
+      chart.data.labels = lbs;
+      series.forEach((s, i) => { chart.data.datasets[i].data = s; });
+      chart.update();
+    }
+    updChart(chartTU,    labels, slice.map(d=>d.temp),  slice.map(d=>d.umid));
+    updChart(chartVolt,  labels, slice.map(d=>d.volt));
+    updChart(chartPress, labels, slice.map(d=>d.p1),    slice.map(d=>d.p2));
+    updChart(chartMotor, labels, slice.map(d=>d.motor));
+
+    // Tabela (últimas 30, mais recente no topo)
+    const tbody = document.getElementById('table-body');
+    tbody.innerHTML = data.slice(-30).reverse().map(d => {
+      const ts = new Date(d.timestamp).toLocaleString('pt-BR');
+      const sigColor = d.sinal >= 19 ? '#22c55e' : d.sinal >= 10 ? '#f59e0b' : '#ef4444';
+      return `<tr>
+        <td>${ts}</td>
+        <td>${fmt(d.temp)}</td>
+        <td>${fmt(d.umid)}</td>
+        <td>${fmt(d.baro,1)}</td>
+        <td>${fmt(d.alt,0)}</td>
+        <td>${fmt(d.volt,1)}</td>
+        <td>${fmt(d.p1,2)}</td>
+        <td>${fmt(d.p2,2)}</td>
+        <td>${fmt(d.motor,0)}</td>
+        <td>${fmt(d.lat,5)}</td>
+        <td>${fmt(d.lon,5)}</td>
+        <td style="color:${sigColor}">${d.sinal > 0 && d.sinal < 99 ? d.sinal+'/31' : '—'}</td>
+      </tr>`;
+    }).join('');
+
+  } catch(e) {
+    document.getElementById('live-label').textContent = 'Erro';
+  }
+}
+
+async function clearData() {
+  if (!confirm('Limpar todo o histórico de leituras?')) return;
+  await fetch('/api/clear');
+  fetchData();
+}
+
+fetchData();
+setInterval(fetchData, 5000);
+</script>
+</body>
+</html>
