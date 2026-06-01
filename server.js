@@ -1,51 +1,49 @@
 const express = require('express');
-const https = require('https');
 const app = express();
 
 const PORT = process.env.PORT || 3000;
 
-// O ID EXATO da sua máquina no Dweet.io
+// O ID EXATO da sua máquina
 const DWEET_DEVICE = 'ESP32-GPRS-COLETA-7734';
 
-// Variável que guarda a última leitura na memória do servidor
 let ultimaLeitura = null;
 let ultimoTimestamp = '';
 
 // =====================================================================
-// 1. MOTOR DE BUSCA (POLLING NO DWEET.IO)
+// 1. MOTOR DE BUSCA MODERNO (FETCH API) COM O NOVO DWEET.CC
 // =====================================================================
-function buscarNoDweet() {
-    https.get(`https://dweet.io/get/latest/dweet/for/${DWEET_DEVICE}`, (res) => {
-        let data = '';
-        res.on('data', chunk => data += chunk);
-        res.on('end', () => {
-            try {
-                const json = JSON.parse(data);
-                if (json.this === 'succeeded' && json.with && json.with.length > 0) {
-                    const dweet = json.with[0];
-                    
-                    // Se o horário do pacote for novo, atualiza o sistema!
-                    if (dweet.created !== ultimoTimestamp) {
-                        ultimoTimestamp = dweet.created;
-                        ultimaLeitura = dweet.content;
-                        
-                        // Formata a data para o horário do Brasil
-                        const dataLocal = new Date(dweet.created).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
-                        ultimaLeitura.data_formatada = dataLocal;
-                        
-                        console.log(`[${dataLocal}] 📥 Novo dado da máquina recebido via Dweet!`);
-                    }
-                }
-            } catch (e) {
-                console.error('Erro ao interpretar pacote do Dweet:', e.message);
+async function buscarNoDweet() {
+    try {
+        console.log('Buscando dados na nuvem (Dweet.cc)...');
+        // Usando o servidor novo (dweet.cc)
+        const resposta = await fetch(`https://dweet.cc/get/latest/dweet/for/${DWEET_DEVICE}`);
+        
+        if (!resposta.ok) {
+            throw new Error(`Servidor Dweet falhou: ${resposta.status}`);
+        }
+        
+        const json = await resposta.json();
+        
+        if (json.this === 'succeeded' && json.with && json.with.length > 0) {
+            const dweet = json.with[0];
+            
+            // Se for uma leitura nova, atualiza o Dashboard!
+            if (dweet.created !== ultimoTimestamp) {
+                ultimoTimestamp = dweet.created;
+                ultimaLeitura = dweet.content;
+                
+                const dataLocal = new Date(dweet.created).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+                ultimaLeitura.data_formatada = dataLocal;
+                
+                console.log(`[${dataLocal}] 🟢 SUCESSO! DADO RECEBIDO:`, ultimaLeitura);
             }
-        });
-    }).on('error', (e) => {
-        console.error('Erro de conexão com a nuvem Dweet:', e.message);
-    });
+        }
+    } catch (erro) {
+        console.error('⚠️ Erro ao buscar pacote:', erro.message);
+    }
 }
 
-// Inicia a busca imediatamente e depois repete a cada 10 segundos
+// Busca imediatamente ao ligar e depois a cada 10 segundos
 buscarNoDweet();
 setInterval(buscarNoDweet, 10000);
 
@@ -53,19 +51,17 @@ setInterval(buscarNoDweet, 10000);
 // 2. DASHBOARD WEB (A TELA QUE VOCÊ VÊ NO CELULAR/PC)
 // =====================================================================
 app.get('/', (req, res) => {
-    // Se a máquina ainda não mandou nada, mostra tela de espera
     if (!ultimaLeitura) {
         return res.send(`
             <div style="font-family: Arial, sans-serif; text-align: center; margin-top: 100px;">
                 <h1>📡 Conectando com a Máquina...</h1>
-                <p>O servidor está escutando o Dweet.io.</p>
+                <p>O servidor está escutando o novo Dweet.cc.</p>
                 <p style="color: gray;">Aguardando o próximo envio do GPRS...</p>
                 <script>setTimeout(() => location.reload(), 5000);</script>
             </div>
         `);
     }
 
-    // Se tem dados, desenha o painel!
     const html = `
     <!DOCTYPE html>
     <html lang="pt-BR">
@@ -141,12 +137,12 @@ app.get('/', (req, res) => {
                 </div>
             </div>
 
-            <a class="map-btn" href="https://maps.google.com/?q=%.6f,%.6f${ultimaLeitura.lat},${ultimaLeitura.lon}" target="_blank">
+            <a class="map-btn" href="http://googleusercontent.com/maps.google.com/7{ultimaLeitura.lat},${ultimaLeitura.lon}" target="_blank">
                 📍 Abrir no Google Maps
             </a>
 
             <div class="footer">
-                Operando via Render.com (ID: srv-d8erk899rddc73clbdug) + Dweet Relay
+                Operando via Render.com + Dweet.cc Relay
             </div>
         </div>
     </body>
@@ -160,5 +156,5 @@ app.get('/', (req, res) => {
 // INICIA O SERVIDOR
 // =====================================================================
 app.listen(PORT, () => {
-    console.log(`🚀 Servidor rodando na porta ${PORT}. Escutando Dweet.io...`);
+    console.log(`🚀 Servidor ONLINE na porta ${PORT}. Escutando Dweet.cc...`);
 });
